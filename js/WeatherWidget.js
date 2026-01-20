@@ -8,6 +8,16 @@ export default class WeatherWidget extends UIComponent {
         });
         this.city = config.city || 'Москва';
         this.weatherData = null;
+        
+        // Добавляем прокси URL для обхода CORS на GitHub Pages
+        this.PROXY_URL = 'https://api.allorigins.win/raw?url=';
+        // Альтернативные прокси, если первый не работает
+        this.PROXY_OPTIONS = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        this.currentProxyIndex = 0;
     }
     
     render() {
@@ -40,6 +50,7 @@ export default class WeatherWidget extends UIComponent {
                     </div>
                 </div>
                 <div class="weather-error" style="display: none;"></div>
+                <div class="weather-proxy-info" style="display: none; font-size: 12px; color: #666; margin-top: 10px;"></div>
                 <button class="btn-refresh">Обновить</button>
             </div>
         `;
@@ -47,6 +58,7 @@ export default class WeatherWidget extends UIComponent {
         this.weatherLoading = this.contentElement.querySelector('.weather-loading');
         this.weatherData = this.contentElement.querySelector('.weather-data');
         this.weatherError = this.contentElement.querySelector('.weather-error');
+        this.proxyInfo = this.contentElement.querySelector('.weather-proxy-info');
         this.weatherCity = this.contentElement.querySelector('.weather-city');
         this.weatherTemp = this.contentElement.querySelector('.weather-temp');
         this.weatherIcon = this.contentElement.querySelector('.weather-icon');
@@ -78,22 +90,59 @@ export default class WeatherWidget extends UIComponent {
         try {
             this.showLoading();
             
-            // Используем бесплатный API от wttr.in который не требует ключа
-            const response = await fetch(
-                `https://wttr.in/${encodeURIComponent(this.city)}?format=j1&lang=ru`
-            );
-            
-            if (!response.ok) {
-                throw new Error('Город не найден или ошибка сервера');
-            }
-            
-            const data = await response.json();
-            this.processWeatherData(data);
+            // Пробуем несколько способов получения данных
+            await this.tryFetchWeatherData();
             
         } catch (error) {
             console.error('Ошибка получения данных о погоде:', error);
-            this.showError('Не удалось получить данные о погоде. Проверьте название города.');
+            
+            // Пробуем использовать другой прокси
+            if (this.currentProxyIndex < this.PROXY_OPTIONS.length - 1) {
+                this.currentProxyIndex++;
+                this.proxyInfo.textContent = `Используется прокси #${this.currentProxyIndex + 1}...`;
+                this.proxyInfo.style.display = 'block';
+                setTimeout(() => this.fetchWeatherData(), 1000);
+                return;
+            }
+            
+            // Все прокси не сработали, показываем ошибку
+            this.showError('Не удалось получить данные о погоде. Проверьте название города или попробуйте позже.');
         }
+    }
+    
+    async tryFetchWeatherData() {
+        const encodedCity = encodeURIComponent(this.city);
+        const proxyUrl = this.PROXY_OPTIONS[this.currentProxyIndex];
+        const targetUrl = `https://wttr.in/${encodedCity}?format=j1&lang=ru`;
+        
+        // Пробуем с прокси
+        const response = await fetch(`${proxyUrl}${encodeURIComponent(targetUrl)}`, {
+            headers: {
+                'Accept': 'application/json',
+            },
+            timeout: 10000 // 10 секунд таймаут
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const text = await response.text();
+        
+        // Проверяем, что получили валидный JSON
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            // Если не JSON, возможно, это HTML страница с ошибкой
+            throw new Error('Неверный формат ответа от сервера');
+        }
+        
+        this.processWeatherData(data);
+        
+        // Показываем информацию о прокси
+        this.proxyInfo.textContent = `Данные получены через прокси`;
+        this.proxyInfo.style.display = 'block';
     }
     
     processWeatherData(data) {
@@ -116,7 +165,7 @@ export default class WeatherWidget extends UIComponent {
             
         } catch (error) {
             console.error('Ошибка обработки данных:', error);
-            this.showError('Ошибка обработки данных погоды');
+            throw new Error('Ошибка обработки данных погоды');
         }
     }
     
@@ -130,6 +179,8 @@ export default class WeatherWidget extends UIComponent {
         else if (desc.includes('туман')) icon = '🌫️';
         else if (desc.includes('гроза')) icon = '⛈️';
         else if (desc.includes('пасмурно')) icon = '☁️';
+        else if (desc.includes('ясно')) icon = '☀️';
+        else if (desc.includes('переменная')) icon = '🌤️';
         
         this.weatherIcon.textContent = icon;
     }
@@ -138,6 +189,7 @@ export default class WeatherWidget extends UIComponent {
         this.weatherLoading.style.display = 'block';
         this.weatherData.style.display = 'none';
         this.weatherError.style.display = 'none';
+        this.proxyInfo.style.display = 'none';
     }
     
     showWeatherData() {
@@ -151,6 +203,7 @@ export default class WeatherWidget extends UIComponent {
         this.weatherData.style.display = 'none';
         this.weatherError.style.display = 'block';
         this.weatherError.textContent = message;
+        this.proxyInfo.style.display = 'none';
     }
     
     update() {
